@@ -1,0 +1,99 @@
+---
+title: 'Prediction Assignment - Coursera Week 4 - Machine Learning:'
+author: "John Romankiewicz"
+date: "February 28, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction and Goals
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The goal of your project is to predict the manner in which they did the exercise. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. This is the "classe" variable in the training set. You may use any of the other variables to predict with.  
+
+Classes:
+A: exactly according to the specification
+B: throwing the elbows to the front
+C: lifting the dumbbell only halfway
+D: lowering the dumbbell only halfway
+E: throwing the hips to the front
+
+## Data exploration and cleaning
+
+Let's import the train and test sets and take a look at the variables. remove NA data, and other descriptive data columns.
+
+```{r}
+train <- read.csv("pml-training.csv", na.strings= c("NA","","#DIV/0!"))
+test <- read.csv("pml-testing.csv", na.strings= c("","NA","#DIV/0!"))
+names(train)
+table(train$classe)
+```
+
+There is a good split of classes among types A-E. This is also a very large dataset. Next, we will remove NA data, and other data columns (1 through 6) that only hold reference data, in an effort to work with a more streamlined dataset.
+
+```{r}
+train <- train[,colSums(is.na(train)) == 0]
+train <- train[,7:60]
+test <- test[,colSums(is.na(test)) == 0]
+test <- test[,7:60]
+```
+
+## Model building
+
+Now it is time to load our machine learning packages, caret and randomForest. We will also need to create a data partition to further split the training set into two parts (60/40), for cross validation purposes.
+``` {r, echo=FALSE}
+library(caret)
+library(randomForest)
+```
+``` {r}
+set.seed(24)
+inTrain <- createDataPartition(y=train$classe, p=0.60, list=FALSE)
+trainSetModel  <- train[inTrain,]
+trainSetTest  <- train[-inTrain,]
+fitModel <- randomForest(classe~., data=trainSetModel, importance=TRUE, ntree=100)
+varImpPlot(fitModel)
+```
+
+It looks like there are breaks in mean decrease accuracy, after 5 variables and after 7 variables. Let's go with 7 variables, as 5 seems too few. Next, we need to see if any of those 7 variables are highly correlated with each other.
+
+```{r}
+correlation = cor(trainSetModel[,c("roll_belt","num_window","yaw_belt","pitch_belt","magnet_dumbbell_z","gyros_arm_y","magnet_dumbbell_y")])
+which(abs(correlation)>0.75 & abs(correlation)<1, arr.ind=TRUE)
+```
+
+Roll belt and yaw belt have high correlation. Let's remove yaw belt. So we have 6 variables now, and we will fit a randomForest model to them, then use our test set we set aside earlier to see how good our prediction is.
+
+```{r}
+set.seed(24)
+fitModel <- train(classe~roll_belt+num_window+pitch_belt+magnet_dumbbell_z+gyros_arm_y+magnet_dumbbell_y,data=trainSetModel,method="rf",trControl=trainControl(method="cv",number=2),prox=TRUE,verbose=TRUE,allowParallel=TRUE)
+prediction <- predict(fitModel, newdata=trainSetTest)
+confusionMat <- confusionMatrix(prediction, trainSetTest$classe)
+confusionMat
+```
+
+## Accuracy and out of sample error rate
+The model has 99.82% accuracy, which is great since there are only 6 variables used out of an initial 54 variables. Let's estimate the out of sample error rate.
+
+```{r}
+OOSerror <- 1 - sum(prediction == trainSetTest$classe)/length(prediction)
+OOSerror
+```
+
+## Predicting test cases
+Now we will use the prediction model to predict 20 different test cases. Those answers were input into the quiz and received a score of 20/20.
+
+```{r}
+predictionTest <- predict(fitModel, newdata = test)
+test$classe <- predictionTest
+submission <- data.frame(problem_id = test$problem_id, classe = predictionTest)
+```
+
+## Citations
+Data downloaded from: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv 
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv 
+
+The data used in this project are from a weight lifting exercise dataset found at: http://groupware.les.inf.puc-rio.br/har
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
